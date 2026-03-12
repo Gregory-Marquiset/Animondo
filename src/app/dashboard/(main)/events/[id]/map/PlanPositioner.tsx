@@ -85,6 +85,7 @@ export default function PlanPositioner({ map, containerRef, fileUrl, initialTran
       rotation: 0,
     }
   )
+  const [opacity, setOpacity] = useState(0.85)
   const [handles, setHandles] = useState({ center: { x: 0, y: 0 }, scale: { x: 0, y: 0 }, rotate: { x: 0, y: 0 } })
 
   const transformRef = useRef(transform)
@@ -106,9 +107,16 @@ export default function PlanPositioner({ map, containerRef, fileUrl, initialTran
       (map.getSource('plan-image') as maplibregl.ImageSource).setCoordinates(corners)
     } else {
       map.addSource('plan-image', { type: 'image', url: fileUrl, coordinates: corners })
-      map.addLayer({ id: 'plan-overlay', type: 'raster', source: 'plan-image', paint: { 'raster-opacity': 0.85 } })
+      map.addLayer({ id: 'plan-overlay', type: 'raster', source: 'plan-image', paint: { 'raster-opacity': opacity } })
     }
-  }, [transform, map, fileUrl])
+  }, [transform, map, fileUrl]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Met à jour l'opacité en temps réel
+  useEffect(() => {
+    if (map.getLayer('plan-overlay')) {
+      map.setPaintProperty('plan-overlay', 'raster-opacity', opacity)
+    }
+  }, [opacity, map])
 
   // Repositionne les poignées HTML au rendu de la carte
   const updateHandles = useCallback(() => {
@@ -231,6 +239,17 @@ export default function PlanPositioner({ map, containerRef, fileUrl, initialTran
         <p className="text-xs text-zinc-500 tabular-nums">
           {Math.round(transform.widthMeters)}m × {Math.round(transform.heightMeters)}m &nbsp;·&nbsp; {Math.round(transform.rotation)}°
         </p>
+        <div className="w-px h-8 bg-zinc-200" />
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-500">Opacité</span>
+          <input
+            type="range" min={0.1} max={1} step={0.05}
+            value={opacity}
+            onChange={e => setOpacity(parseFloat(e.target.value))}
+            className="w-24 accent-zinc-900 cursor-pointer"
+          />
+          <span className="text-xs text-zinc-400 tabular-nums w-8">{Math.round(opacity * 100)}%</span>
+        </div>
         <div className="w-px h-8 bg-zinc-200" />
         <div className="flex gap-2">
           <button onClick={onCancel} className="text-sm text-zinc-500 hover:text-zinc-900 px-3 py-1.5 transition-colors">
