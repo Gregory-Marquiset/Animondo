@@ -1,10 +1,12 @@
 'use client'
 
 import maplibregl, { type StyleSpecification } from 'maplibre-gl'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import PlanPositioner, { GeoTransform, cornersToTransform, transformToCorners } from './PlanPositioner'
+import DrawingManager from './DrawingManager'
 import { savePlanTransform } from './actions'
+import { loadMapFeatures, type DrawFeature } from './drawingActions'
 
 const MAP_STYLE: StyleSpecification = {
   version: 8,
@@ -48,7 +50,7 @@ export default function MapEditor({ event, eventMap: initialEventMap }: Props) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const [mapReady, setMapReady] = useState(false)
-  const [mode, setMode] = useState<'view' | 'position'>('view')
+  const [mode, setMode] = useState<'view' | 'position' | 'draw'>('view')
   const [localEventMap, setLocalEventMap] = useState<EventMap | null>(initialEventMap)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -79,6 +81,72 @@ export default function MapEditor({ event, eventMap: initialEventMap }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Affiche les features dessinées en mode view
+  const refreshDrawnFeatures = useCallback(async () => {
+    const m = map.current
+    if (!m || !localEventMap?.id) return
+
+    // Nettoie les couches existantes
+    for (const id of ['drawn-polygons-fill', 'drawn-polygons-outline', 'drawn-lines', 'drawn-points']) {
+      if (m.getLayer(id)) m.removeLayer(id)
+    }
+    if (m.getSource('drawn-features')) m.removeSource('drawn-features')
+
+    const features = await loadMapFeatures(localEventMap.id)
+    if (!features.length || !m) return
+
+    m.addSource('drawn-features', {
+      type: 'geojson',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data: { type: 'FeatureCollection', features: features as any[] },
+    })
+
+    // Polygones (stands, zones)
+    m.addLayer({
+      id: 'drawn-polygons-fill',
+      type: 'fill',
+      source: 'drawn-features',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.25 },
+    })
+    m.addLayer({
+      id: 'drawn-polygons-outline',
+      type: 'line',
+      source: 'drawn-features',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'line-color': ['get', 'color'], 'line-width': 2 },
+    })
+    // Lignes (murs)
+    m.addLayer({
+      id: 'drawn-lines',
+      type: 'line',
+      source: 'drawn-features',
+      filter: ['==', ['geometry-type'], 'LineString'],
+      paint: { 'line-color': ['get', 'color'], 'line-width': 2.5 },
+    })
+    // Points (POIs)
+    m.addLayer({
+      id: 'drawn-points',
+      type: 'circle',
+      source: 'drawn-features',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': 6,
+        'circle-color': ['get', 'color'],
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#fff',
+      },
+    })
+  }, [localEventMap])
+
+  // Charge les features à l'ouverture (après map load)
+  useEffect(() => {
+    if (mapReady && mode === 'view') {
+      refreshDrawnFeatures()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady])
+
   function removeOverlay() {
     if (!map.current) return
     if (map.current.getLayer('plan-overlay')) map.current.removeLayer('plan-overlay')
@@ -86,31 +154,44 @@ export default function MapEditor({ event, eventMap: initialEventMap }: Props) {
   }
 
   function enterPositionMode() {
-    removeOverlay() // PlanPositioner prend la main sur l'overlay
+    removeOverlay()
     setMode('position')
   }
 
-  function handleCancel() {
+  function handleCancelPosition() {
     removeOverlay()
-    // Restaure l'overlay sauvegardé si existant
     if (map.current && localEventMap?.file_url && localEventMap.geo_transform) {
       addPlanOverlay(map.current, localEventMap.file_url, localEventMap.geo_transform)
     }
     setMode('view')
   }
 
-  async function handleSave(corners: GeoTransform) {
+  async function handleSavePosition(corners: GeoTransform) {
     if (!localEventMap) return
     setSaveError(null)
     const result = await savePlanTransform(localEventMap.id, corners)
     if (result?.error) { setSaveError(result.error); return }
     setLocalEventMap(prev => prev ? { ...prev, geo_transform: corners } : prev)
     setMode('view')
-    // L'overlay est déjà à jour (PlanPositioner l'a modifié en temps réel)
+  }
+
+  function enterDrawMode() {
+    setMode('draw')
+  }
+
+  function handleCancelDraw() {
+    setMode('view')
+  }
+
+  async function handleSavedDraw() {
+    setMode('view')
+    // Rafraîchit l'affichage en mode view
+    if (map.current?.loaded()) refreshDrawnFeatures()
   }
 
   const hasPlan = !!localEventMap?.file_url
   const isPositioned = !!localEventMap?.geo_transform
+  const canDraw = !!localEventMap?.id
 
   return (
     <div className="flex flex-col h-full">
@@ -143,18 +224,30 @@ export default function MapEditor({ event, eventMap: initialEventMap }: Props) {
               Plan positionné ✓
             </span>
           )}
-          {hasPlan && mode === 'view' && (
-            <button
-              onClick={enterPositionMode}
-              className="bg-zinc-900 text-white px-3 py-1.5 rounded-lg hover:bg-zinc-700 transition-colors font-medium"
-            >
-              {isPositioned ? 'Repositionner le plan' : 'Positionner le plan'}
-            </button>
+          {mode === 'view' && (
+            <div className="flex gap-2">
+              {hasPlan && (
+                <button
+                  onClick={enterPositionMode}
+                  className="border border-zinc-300 text-zinc-700 px-3 py-1.5 rounded-lg hover:bg-zinc-50 transition-colors font-medium"
+                >
+                  {isPositioned ? 'Repositionner' : 'Positionner le plan'}
+                </button>
+              )}
+              {canDraw && (
+                <button
+                  onClick={enterDrawMode}
+                  className="bg-zinc-900 text-white px-3 py-1.5 rounded-lg hover:bg-zinc-700 transition-colors font-medium"
+                >
+                  Dessiner
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      {/* Zone carte + poignées */}
+      {/* Zone carte */}
       <div ref={wrapperRef} className="flex-1 relative">
         <div ref={mapContainer} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }} />
 
@@ -168,8 +261,17 @@ export default function MapEditor({ event, eventMap: initialEventMap }: Props) {
                 ? cornersToTransform(localEventMap.geo_transform)
                 : null
             }
-            onSave={handleSave}
-            onCancel={handleCancel}
+            onSave={handleSavePosition}
+            onCancel={handleCancelPosition}
+          />
+        )}
+
+        {mode === 'draw' && map.current && mapReady && localEventMap?.id && (
+          <DrawingManager
+            map={map.current}
+            eventMapId={localEventMap.id}
+            onSaved={handleSavedDraw}
+            onCancel={handleCancelDraw}
           />
         )}
       </div>
