@@ -22,6 +22,15 @@ const MAP_STYLE: StyleSpecification = {
 const DEFAULT_CENTER: [number, number] = [2.3522, 48.8566]
 const DEFAULT_ZOOM = 14
 
+function planBounds(geo: GeoTransform): maplibregl.LngLatBoundsLike {
+  const lngs = geo.map(c => c[0])
+  const lats = geo.map(c => c[1])
+  return [
+    [Math.min(...lngs), Math.min(...lats)],
+    [Math.max(...lngs), Math.max(...lats)],
+  ]
+}
+
 interface EventMap {
   id: string
   file_url: string | null
@@ -46,10 +55,13 @@ export default function MapEditor({ event, eventMap: initialEventMap }: Props) {
   useEffect(() => {
     if (!mapContainer.current || map.current) return
 
+    const geo = localEventMap?.geo_transform
+    const initCenter = geo ? cornersToTransform(geo).center : DEFAULT_CENTER
+
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: MAP_STYLE,
-      center: DEFAULT_CENTER,
+      center: initCenter,
       zoom: DEFAULT_ZOOM,
     })
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right')
@@ -59,6 +71,7 @@ export default function MapEditor({ event, eventMap: initialEventMap }: Props) {
       setMapReady(true)
       if (map.current && localEventMap?.file_url && localEventMap.geo_transform) {
         addPlanOverlay(map.current, localEventMap.file_url, localEventMap.geo_transform)
+        map.current.fitBounds(planBounds(localEventMap.geo_transform), { padding: 80, duration: 0 })
       }
     })
 
