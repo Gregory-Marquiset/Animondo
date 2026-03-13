@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import maplibregl from 'maplibre-gl'
 import {
   TerraDraw,
@@ -32,11 +32,17 @@ interface Props {
 export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: Props) {
   const drawRef = useRef<TerraDraw | null>(null)
   const [activeLayer, setActiveLayer] = useState<LayerType>('stands')
-  const [featureCount, setFeatureCount] = useState(0)
+  const [snapshot, setSnapshot] = useState<ReturnType<TerraDraw['getSnapshot']>>([])
   const [isSelecting, setIsSelecting] = useState(false)
   const [showSelectHelp, setShowSelectHelp] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const featureCount = snapshot.length
+  const selectedWalls = useMemo(
+    () => snapshot.filter(f => f.properties?.selected === true && f.properties?.mode === 'linestring'),
+    [snapshot],
+  )
 
   useEffect(() => {
     const draw = new TerraDraw({
@@ -51,7 +57,7 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
           },
         }),
         new TerraDrawCircleMode(),
-        new TerraDrawLineStringMode(),
+        new TerraDrawLineStringMode({ snapping: { toCoordinate: true } }),
         new TerraDrawPointMode(),
         new TerraDrawPolygonMode(),
       ],
@@ -67,14 +73,14 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         draw.addFeatures(features as any[])
-        setFeatureCount(draw.getSnapshot().length)
+        setSnapshot(draw.getSnapshot())
       } catch (e) {
         console.warn('Could not restore features:', e)
       }
     })
 
     draw.on('change', () => {
-      setFeatureCount(draw.getSnapshot().length)
+      setSnapshot(draw.getSnapshot())
     })
 
     return () => {
@@ -101,18 +107,49 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
   }
 
   function deleteSelected() {
-    const snapshot = drawRef.current?.getSnapshot() ?? []
     const selectedIds = snapshot
       .filter(f => f.properties?.selected === true)
       .map(f => f.id as string)
     if (selectedIds.length) drawRef.current?.removeFeatures(selectedIds)
   }
 
+  function mergeWalls() {
+    if (selectedWalls.length !== 2 || !drawRef.current) return
+    type Pos = number[]
+    const c1 = (selectedWalls[0].geometry as { coordinates: Pos[] }).coordinates
+    const c2 = (selectedWalls[1].geometry as { coordinates: Pos[] }).coordinates
+    const dist = (a: Pos, b: Pos) => Math.hypot(a[0] - b[0], a[1] - b[1])
+
+    // Try 4 endpoint combos, pick the one where the join is closest
+    const combos: [Pos[], Pos[]][] = [
+      [c1,              c2             ],  // end1 → start2
+      [c1,              [...c2].reverse()], // end1 → end2
+      [[...c1].reverse(), c2            ],  // start1 → start2 (reversed c1)
+      [[...c1].reverse(), [...c2].reverse()], // both reversed
+    ]
+    let best = combos[0]
+    let bestDist = dist(combos[0][0].at(-1)!, combos[0][1][0])
+    for (const combo of combos.slice(1)) {
+      const d = dist(combo[0].at(-1)!, combo[1][0])
+      if (d < bestDist) { bestDist = d; best = combo }
+    }
+
+    const merged = [...best[0], ...best[1]]
+    drawRef.current.removeFeatures(selectedWalls.map(f => f.id as string))
+    drawRef.current.addFeatures([{
+      type: 'Feature',
+      id: crypto.randomUUID(),
+      geometry: { type: 'LineString', coordinates: merged },
+      properties: { mode: 'linestring', color: '#6B7280' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any])
+  }
+
   async function handleSave() {
     if (!drawRef.current) return
     setSaving(true)
     setError(null)
-    const snapshot = drawRef.current.getSnapshot() as DrawFeature[]
+    const snapshot = drawRef.current.getSnapshot() as unknown as DrawFeature[]
     const result = await saveAllFeatures(eventMapId, snapshot)
     setSaving(false)
     if (result?.error) {
@@ -169,6 +206,15 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
             </div>
           )}
         </div>
+        {selectedWalls.length === 2 && (
+          <button
+            onClick={mergeWalls}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+            title="Fusionner les 2 murs sélectionnés en un seul"
+          >
+            Fusionner
+          </button>
+        )}
         <button
           onClick={deleteSelected}
           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-100 text-zinc-600 hover:bg-red-100 hover:text-red-600 transition-colors"
