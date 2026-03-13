@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache'
 // Mapping layer type → terra-draw mode
 const LAYER_TO_MODE: Record<string, string> = {
   walls:  'linestring',
-  stands: 'rectangle',
+  stands: 'circle',
   pois:   'point',
   zones:  'polygon',
 }
@@ -64,7 +64,7 @@ const LAYER_NAMES: Record<string, string> = {
 
 const MODE_TO_LAYER: Record<string, string> = {
   linestring: 'walls',
-  rectangle:  'stands',
+  circle:     'stands',
   point:      'pois',
   polygon:    'zones',
 }
