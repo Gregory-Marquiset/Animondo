@@ -8,13 +8,13 @@ import {
   TerraDrawPointMode,
   TerraDrawLineStringMode,
   TerraDrawPolygonMode,
-  TerraDrawRectangleMode,
+  TerraDrawCircleMode,
 } from 'terra-draw'
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter'
 import { loadMapFeatures, saveAllFeatures, type DrawFeature } from './drawingActions'
 
 const LAYERS = [
-  { type: 'stands',  label: 'Stands',  mode: 'rectangle',  color: '#3B82F6' },
+  { type: 'stands',  label: 'Stands',  mode: 'circle',     color: '#3B82F6' },
   { type: 'walls',   label: 'Murs',    mode: 'linestring', color: '#6B7280' },
   { type: 'pois',    label: 'POIs',    mode: 'point',      color: '#EF4444' },
   { type: 'zones',   label: 'Zones',   mode: 'polygon',    color: '#10B981' },
@@ -34,6 +34,7 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
   const [activeLayer, setActiveLayer] = useState<LayerType>('stands')
   const [featureCount, setFeatureCount] = useState(0)
   const [isSelecting, setIsSelecting] = useState(false)
+  const [showSelectHelp, setShowSelectHelp] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -44,12 +45,12 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
         new TerraDrawSelectMode({
           flags: {
             polygon:    { feature: { draggable: true, scaleable: true, coordinates: { midpoints: true, deletable: true } } },
-            rectangle:  { feature: { draggable: true, scaleable: true, rotateable: true } },
+            circle:     { feature: { draggable: true, scaleable: true } },
             linestring: { feature: { draggable: true, coordinates: { midpoints: true, deletable: true } } },
             point:      { feature: { draggable: true } },
           },
         }),
-        new TerraDrawRectangleMode(),
+        new TerraDrawCircleMode(),
         new TerraDrawLineStringMode(),
         new TerraDrawPointMode(),
         new TerraDrawPolygonMode(),
@@ -57,7 +58,7 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
     })
 
     draw.start()
-    draw.setMode('rectangle')
+    draw.setMode('circle')
     drawRef.current = draw
 
     // Load existing features from DB
@@ -145,15 +146,29 @@ export default function DrawingManager({ map, eventMapId, onSaved, onCancel }: P
 
       {/* Tools */}
       <div className="flex gap-1">
-        <button
-          onClick={toggleSelect}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            isSelecting ? 'bg-zinc-800 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-          }`}
-          title="Sélectionner / déplacer"
-        >
-          Sélect.
-        </button>
+        <div className="relative">
+          <button
+            onClick={toggleSelect}
+            onMouseEnter={() => setShowSelectHelp(true)}
+            onMouseLeave={() => setShowSelectHelp(false)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              isSelecting ? 'bg-zinc-800 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+            }`}
+          >
+            Sélect.
+          </button>
+          {showSelectHelp && (
+            <div className="absolute bottom-full left-0 mb-2 w-44 bg-zinc-800 text-white text-xs rounded-lg p-3 pointer-events-none z-20 shadow-lg">
+              <p className="font-semibold mb-1.5">Mode sélection</p>
+              <ul className="space-y-1 text-zinc-300">
+                <li>🖱 Clic → sélectionner</li>
+                <li>↔ Glisser → déplacer</li>
+                <li>⬛ Coins → redimensionner</li>
+                <li>🗑 Bouton Suppr. → effacer</li>
+              </ul>
+            </div>
+          )}
+        </div>
         <button
           onClick={deleteSelected}
           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-100 text-zinc-600 hover:bg-red-100 hover:text-red-600 transition-colors"
